@@ -1,0 +1,13 @@
+{
+    "authors": [
+        "karita"
+    ],
+    "copyright": "Copyright © 2019, karita",
+    "dependencies": {
+        "pegged": "~>0.4.4",
+        "sumtype": "~>0.9.4"
+    },
+    "description": "Write yourself a Scheme in 48 Hours in D",
+    "license": "BSL-1.0",
+    "name": "scheme-d"
+}

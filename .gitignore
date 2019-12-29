@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/scheme-d
+scheme-d.so
+scheme-d.dylib
+scheme-d.dll
+scheme-d.a
+scheme-d.lib
+scheme-d-test-*
+*.exe
+*.o
+*.obj
+*.lst
