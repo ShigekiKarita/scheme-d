@@ -6,7 +6,7 @@ import pegged.grammar;
 
 
 mixin(grammar(`
-SchemeParser:
+LispParser:
     Body < SExpr* / Comment
     Comment <: ';' (!endOfLine .)* endOfLine
     SExpr < :'(' (Value / Comment)* :')'
@@ -14,8 +14,10 @@ SchemeParser:
     List < quote SExpr
 
     Atom <~ AtomChar (AtomChar / Digit)*
-    AtomChar <- [a-zA-Z_] / '+' / '-' / '*' / '/'
-              / quote / ':' / '!' / '$' / '%' / '&' / '=' / '~' / '^' / ':'
+    AtomChar <- [a-zA-Z] / Symbol
+    Symbol <- '!' / '#' / '$' / '%' / '&' / '|'
+            / '+' / '-' / '*' / '/' / ':' / '<'
+            / '=' / '>' / '?' / '@' / '^' / '_' / '~'
     String <~ :doublequote Char* :doublequote
     Char   <~ backslash doublequote
             / backslash backslash
@@ -30,19 +32,24 @@ SchemeParser:
 `));
 
 struct Atom { string name; }
-struct List { Object[] data; }
+struct List { LispVal[] data; }
 struct DottedList
 {
-    Object[] data;
-    Object tail;
+    LispVal[] data;
+    LispVal* tail;
 }
+// TODO: support float
+struct Number { long integer; }
 
-alias Object = SumType!(
+alias LispVal = SumType!(
     Atom,
     List,
-    long,
+    DottedList,
+    Number,
     string,
     bool);
+
+
 
 void main(string[] args)
 {
@@ -53,6 +60,6 @@ void main(string[] args)
     ;; comment
     (+ 20 -30))
 `;
-    writeln(SchemeParser(input1));
+    writeln(LispParser(input1));
     // writeln("Hello, ", args[1]);
 }
