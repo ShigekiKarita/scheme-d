@@ -11,9 +11,11 @@ mixin(grammar(`
 LispParser:
     Body < (Value / Comment)*
     Comment <: ';' (!endOfLine .)* endOfLine
-    SExpr < :'(' (Value / Comment)* :')'
+    SExpr < :'(' List :')'
+    List < (Value / Comment)*
+    DottedList < :'(' List '.' Comment* Value Comment* :')'
 
-    Value < Number / True / False / Atom / String / SExpr / QuotedValue
+    Value < Number / True / False / Atom / String / DottedList / SExpr / QuotedValue
     QuotedValue <- quote Value
     Atom <~ AtomChar (AtomChar / Digit)*
     AtomChar <- [a-zA-Z] / Symbol
@@ -36,7 +38,8 @@ LispParser:
 `));
 
 struct Atom { string name; }
-// alias List = SList!(LispVal*);
+
+// proper list: (a b c)
 struct List
 {
     LispVal* car;
@@ -45,10 +48,8 @@ struct List
     this(LispVal*[] values...)
     {
         if (values.length == 0) return;
-
         this.car = values[0];
         if (values.length < 1) return;
-
         this.cdr = new List(values[1 .. $]);
     }
 
@@ -65,11 +66,13 @@ struct List
     auto save() { return this; }
 }
 
+/// i.e., improper list: (a b . c)
 struct DottedList
 {
-    LispVal*[] data;
+    List* list;
     LispVal* tail;
 }
+
 alias Integer = long;
 alias Float = double;
 alias LispVal = SumType!(
@@ -100,12 +103,19 @@ LispVal*[] toAST(ParseTree tree)
                 ret ~= toAST(child);
             }
             return ret;
+        // multiple values
         case "LispParser.QuotedValue":
             assert(tree.children.length <= 1, "The quoted arg should be one or nil.");
             auto quote = new LispVal(Atom("quote"));
             auto arg = tree.children.length == 0 ? new LispVal(List()) : toAST(tree.children[0])[0];
             return [new LispVal(List([quote, arg]))];
         case "LispParser.SExpr":
+            return toAST(tree.children[0]);
+        case "LispParser.DottedList":
+            auto list = toAST(tree.children[0])[0].unwrap!List;
+            auto tail = toAST(tree.children[1])[0];
+            return [new LispVal(DottedList(&list, tail))];
+        case "LispParser.List":
             List ret;
             auto iter = &ret;
             foreach (ref child; tree.children)
@@ -150,10 +160,16 @@ unittest
     (+ 20 -30))
 
 #t
+
+(1 2
+; foo
+.
+; bar
+3)
 ");
     writeln(p);
     auto ast = p.toAST;
-    assert(ast.length == 3);
+    assert(ast.length == 4);
 
     // (f0 #t #f '(1 0.2) '())
     auto sexp0 = ast[0].unwrap!List;
@@ -191,7 +207,6 @@ unittest
     //     ;; comment
     //     (+ 20 -30))
     auto sexp1 = ast[1].unwrap!List;
-    assert(sexp1.walkLength == 3);
     assert(sexp1.front.unwrap!Atom.name == "f1");
     sexp1.popFront();
     assert(sexp1.front.unwrap!string == "あいうえお\n");
@@ -208,5 +223,13 @@ unittest
     assert(sexp1.empty);
 
     assert(ast[2].unwrap!bool);
+
+    auto dl = ast[3].unwrap!DottedList;
+    assert(dl.list.front.unwrap!Integer == 1);
+    dl.list.popFront();
+    assert(dl.list.front.unwrap!Integer == 2);
+    dl.list.popFront();
+    assert(dl.list.empty);
+    assert(dl.tail.unwrap!Integer == 3);
 }
 
