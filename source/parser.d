@@ -1,17 +1,19 @@
 module parser;
 
+import std.container;
+
 import sumtype;
 import pegged.grammar;
 
 
 mixin(grammar(`
 LispParser:
-    Body < SExpr* / Comment
+    Body < (Value / Comment)*
     Comment <: ';' (!endOfLine .)* endOfLine
-    SExpr < Quote? :'(' (Value / Comment)* :')'
-    Value < Number / True / False / Atom / String / SExpr
+    SExpr < :'(' (Value / Comment)* :')'
 
-    Quote <- quote
+    Value < Number / True / False / Atom / String / SExpr / QuotedValue
+    QuotedValue <- quote Value
     Atom <~ AtomChar (AtomChar / Digit)*
     AtomChar <- [a-zA-Z] / Symbol
     Symbol <- '!' / '#' / '$' / '%' / '&' / '|'
@@ -36,7 +38,6 @@ struct Atom { string name; }
 struct List
 {
     LispVal*[] data;
-    bool quote = false;
     alias data this;
 }
 struct DottedList
@@ -74,14 +75,13 @@ LispVal*[] toAST(ParseTree tree)
                 ret ~= toAST(child);
             }
             return ret;
-        // multiple values
-        case "LispParser.List":
+        case "LispParser.QuotedValue":
+            assert(tree.children.length <= 1, "The quoted arg should be one or nil.");
+            auto quote = new LispVal(Atom("quote"));
+            auto arg = tree.children.length == 0 ? new LispVal(List()) : toAST(tree.children[0])[0];
+            return [new LispVal(List([quote, arg]))];
         case "LispParser.SExpr":
             List ls;
-            if (tree.name == "LispParser.List")
-            {
-                ls.data ~= new LispVal(Atom("quote"));
-            }
             foreach (ref child; tree.children)
             {
                 ls.data ~= toAST(child);
@@ -114,12 +114,17 @@ unittest
     auto p = LispParser("
 (f0 #t #f '(1 0.2) '())
 
+; (1 2 . 3))
+
 (f1 \"あいうえお\n\"
     ;; comment
     (+ 20 -30))
+
+#t
 ");
     writeln(p);
     auto ast = p.toAST;
+    assert(ast.length == 3);
 
     // (f0 #t #f '(1 0.2) '())
     auto sexp0 = ast[0].unwrap!List;
@@ -131,15 +136,17 @@ unittest
     // #f
     assert(sexp0[2].unwrap!bool == false);
     // '(1 2)
-    auto xs = sexp0[3].unwrap!List;
-    assert(xs.length == 3);
-    assert(xs[0].unwrap!Atom.name == "quote");
-    assert(xs[1].unwrap!Integer == 1);
-    assert(xs[2].unwrap!Float == 0.2);
+    auto q = sexp0[3].unwrap!List;
+    assert(q[0].unwrap!Atom.name == "quote");
+    auto xs = q[1].unwrap!List;
+    assert(xs.length == 2);
+    assert(xs[0].unwrap!Integer == 1);
+    assert(xs[1].unwrap!Float == 0.2);
     // '()
     auto nil = sexp0[4].unwrap!List;
-    assert(nil.length == 1);
+    assert(nil.length == 2);
     assert(nil[0].unwrap!Atom.name == "quote");
+    assert(nil[1].unwrap!List.length == 0);
 
     // (f1 "string"
     //     ;; comment
@@ -152,5 +159,7 @@ unittest
     assert(addexp[0].unwrap!Atom.name == "+");
     assert(addexp[1].unwrap!Integer == 20);
     assert(addexp[2].unwrap!Integer == -30);
+
+    assert(ast[2].unwrap!bool);
 }
 
