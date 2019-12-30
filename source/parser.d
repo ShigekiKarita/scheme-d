@@ -1,7 +1,8 @@
 module parser;
 
-import std.range;
-import std.container;
+import std.variant;
+import std.format;
+import std.conv : to, text;
 
 import sumtype;
 import pegged.grammar;
@@ -11,12 +12,13 @@ mixin(grammar(`
 LispParser:
     Body < (Value / Comment)*
     Comment <: ';' (!endOfLine .)* endOfLine
-    SExpr < :'(' List :')'
-    List < (Value / Comment)*
-    DottedList < :'(' List '.' Comment* Value Comment* :')'
 
     Value < Number / True / False / Atom / String / DottedList / SExpr / QuotedValue
     QuotedValue <- quote Value
+    SExpr < :'(' List :')'
+    DottedList < :'(' List '.' Comment* Value Comment* :')'
+    List < (Value / Comment)*
+
     Atom <~ AtomChar (AtomChar / Digit)*
     AtomChar <- [a-zA-Z] / Symbol
     Symbol <- '!' / '#' / '$' / '%' / '&' / '|'
@@ -37,23 +39,28 @@ LispParser:
     False <- "#f"
 `));
 
-struct Atom { string name; }
+struct Atom
+{
+    string name;
+
+    string toString() { return name; }
+}
 
 // proper list: (a b c)
-struct List
+struct _List(T)
 {
-    LispVal* car;
-    List* cdr;
+    T car;
+    _List!T* cdr;
 
-    this(LispVal*[] values...)
+    this(T[] values...)
     {
         if (values.length == 0) return;
         this.car = values[0];
         if (values.length < 1) return;
-        this.cdr = new List(values[1 .. $]);
+        this.cdr = new typeof(this)(values[1 .. $]);
     }
 
-    auto front() { return this.car; }
+    T front() { return this.car; }
 
     void popFront()
     {
@@ -64,25 +71,97 @@ struct List
     bool empty() { return this.car == null; }
 
     auto save() { return this; }
+
+    string toString()
+    {
+        if (this.empty) return "()";
+        string ret = "(";
+        foreach (x; this)
+        {
+            // NOTE: don't know why I need this...
+            static if (__traits(compiles, text(*x)))
+            {
+                ret ~= text(*x) ~ " ";
+            }
+            else
+            {
+                ret ~= text(x) ~ " ";
+            }
+        }
+        return ret[0 .. $-1] ~ ")";
+    }
 }
 
 /// i.e., improper list: (a b . c)
-struct DottedList
+struct _DottedList(T)
 {
-    List* list;
-    LispVal* tail;
+    _List!T list;
+    T tail;
+
+    string toString()
+    {
+        static if (__traits(compiles, text(*tail)))
+        {
+            auto s = text(*tail);
+        }
+        else
+        {
+            auto s = text(tail);
+        }
+
+        return list.toString[0 .. $-1] ~ " . " ~ s ~ ")";
+    }
+}
+
+struct String
+{
+    string data;
+
+    string toString()
+    {
+        import std.string : replace;
+        return "\"" ~
+                this.data
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+                ~ "\"";
+    }
+}
+
+struct Bool
+{
+    bool data;
+    alias data this;
+    string toString() { return data ? "#t" : "#f"; }
 }
 
 alias Integer = long;
 alias Float = double;
-alias LispVal = SumType!(
+alias LispVal = Algebraic!(
     Atom,
-    List,
-    DottedList,
+    _List!(This*),
+    _DottedList!(This*),
     Integer,
     Float,
-    string,
-    bool);
+    String,
+    Bool);
+
+alias List = _List!(LispVal*);
+alias DottedList = _DottedList!(LispVal*);
+
+unittest
+{
+    import std.traits;
+
+    alias T = SumType!(int, This*);
+    static assert(isCopyable!T);
+
+    static assert(isCopyable!LispVal);
+}
+
 
 LispVal*[] toAST(ParseTree tree)
 {
@@ -94,6 +173,7 @@ LispVal*[] toAST(ParseTree tree)
         case "LispParser":
         case "LispParser.Value":
         case "LispParser.Number":
+        case "LispParser.SExpr":
             assert(tree.children.length == 1);
             return toAST(tree.children[0]);
         case "LispParser.Body":
@@ -109,12 +189,10 @@ LispVal*[] toAST(ParseTree tree)
             auto quote = new LispVal(Atom("quote"));
             auto arg = tree.children.length == 0 ? new LispVal(List()) : toAST(tree.children[0])[0];
             return [new LispVal(List([quote, arg]))];
-        case "LispParser.SExpr":
-            return toAST(tree.children[0]);
         case "LispParser.DottedList":
             auto list = toAST(tree.children[0])[0].unwrap!List;
             auto tail = toAST(tree.children[1])[0];
-            return [new LispVal(DottedList(&list, tail))];
+            return [new LispVal(DottedList(list, tail))];
         case "LispParser.List":
             List ret;
             auto iter = &ret;
@@ -129,7 +207,7 @@ LispVal*[] toAST(ParseTree tree)
         // single value
         case "LispParser.True":
         case "LispParser.False":
-            return [new LispVal(tree.matches[0] == "#t")];
+            return [new LispVal(Bool(tree.matches[0] == "#t"))];
         case "LispParser.Integer":
             return [new LispVal(to!Integer(tree.matches[0]))];
         case "LispParser.Float":
@@ -139,13 +217,19 @@ LispVal*[] toAST(ParseTree tree)
         case "LispParser.Atom":
             return [new LispVal(Atom(tree.matches[0]))];
         case "LispParser.String":
-            return [new LispVal(tree.matches[0])];
+            return [new LispVal(String(tree.matches[0]))];
         default:
             assert(false, "unknown name: " ~ tree.name);
     }
 }
 
-auto unwrap(T)(LispVal* x) { return tryMatch!((T t) => t)(*x); }
+T unwrap(T)(LispVal* x)
+{
+    // for std.variant.Algebraic
+    return *(x.peek!T);
+    // for SumType
+    // return tryMatch!((T t) => t)(*x);
+}
 
 unittest
 {
@@ -167,7 +251,7 @@ unittest
 ; bar
 3)
 ");
-    writeln(p);
+    // writeln(p);
     auto ast = p.toAST;
     assert(ast.length == 4);
 
@@ -177,10 +261,10 @@ unittest
     assert(sexp0.front.unwrap!Atom.name == "f0");
     // #t
     sexp0.popFront();
-    assert(sexp0.front.unwrap!bool == true);
+    assert(sexp0.front.unwrap!Bool == true);
     // #f
     sexp0.popFront();
-    assert(sexp0.front.unwrap!bool == false);
+    assert(sexp0.front.unwrap!Bool == false);
     // '(1 2)
     sexp0.popFront();
     auto q = sexp0.front.unwrap!List;
@@ -209,7 +293,7 @@ unittest
     auto sexp1 = ast[1].unwrap!List;
     assert(sexp1.front.unwrap!Atom.name == "f1");
     sexp1.popFront();
-    assert(sexp1.front.unwrap!string == "あいうえお\n");
+    assert(sexp1.front.unwrap!String.data == "あいうえお\n");
     sexp1.popFront();
     auto addexp = sexp1.front.unwrap!List;
     assert(addexp.front.unwrap!Atom.name == "+");
@@ -222,7 +306,7 @@ unittest
     sexp1.popFront();
     assert(sexp1.empty);
 
-    assert(ast[2].unwrap!bool);
+    assert(ast[2].unwrap!Bool);
 
     auto dl = ast[3].unwrap!DottedList;
     assert(dl.list.front.unwrap!Integer == 1);
@@ -231,5 +315,15 @@ unittest
     dl.list.popFront();
     assert(dl.list.empty);
     assert(dl.tail.unwrap!Integer == 3);
+
+    // test pretty print
+    assert(ast[0].toString == `(f0 #t #f (quote (1 0.2)) (quote ()))`);
+    assert(ast[1].toString == `(f1 "あいうえお\n" (+ 20 -30))`);
+    assert(ast[2].toString == `#t`);
+    assert(ast[3].toString == `(1 2 . 3)`);
+    // foreach (val; ast)
+    // {
+    //     writeln(*val);
+    // }
 }
 
