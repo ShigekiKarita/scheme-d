@@ -1,5 +1,6 @@
 module parser;
 
+import std.range;
 import std.container;
 
 import sumtype;
@@ -35,11 +36,35 @@ LispParser:
 `));
 
 struct Atom { string name; }
+// alias List = SList!(LispVal*);
 struct List
 {
-    LispVal*[] data;
-    alias data this;
+    LispVal* car;
+    List* cdr;
+
+    this(LispVal*[] values...)
+    {
+        if (values.length == 0) return;
+
+        this.car = values[0];
+        if (values.length < 1) return;
+
+        this.cdr = new List(values[1 .. $]);
+    }
+
+    auto front() { return this.car; }
+
+    void popFront()
+    {
+        this.car = this.cdr.car;
+        this.cdr = this.cdr.cdr;
+    }
+
+    bool empty() { return this.car == null; }
+
+    auto save() { return this; }
 }
+
 struct DottedList
 {
     LispVal*[] data;
@@ -81,12 +106,16 @@ LispVal*[] toAST(ParseTree tree)
             auto arg = tree.children.length == 0 ? new LispVal(List()) : toAST(tree.children[0])[0];
             return [new LispVal(List([quote, arg]))];
         case "LispParser.SExpr":
-            List ls;
+            List ret;
+            auto iter = &ret;
             foreach (ref child; tree.children)
             {
-                ls.data ~= toAST(child);
+                iter.car = toAST(child)[0];
+                auto tmp = new List;
+                iter.cdr = tmp;
+                iter = tmp;
             }
-            return [new LispVal(ls)];
+            return [new LispVal(ret)];
         // single value
         case "LispParser.True":
         case "LispParser.False":
@@ -128,37 +157,55 @@ unittest
 
     // (f0 #t #f '(1 0.2) '())
     auto sexp0 = ast[0].unwrap!List;
-    assert(sexp0.length == 5);
     // f0
-    assert(sexp0[0].unwrap!Atom.name == "f0");
+    assert(sexp0.front.unwrap!Atom.name == "f0");
     // #t
-    assert(sexp0[1].unwrap!bool == true);
+    sexp0.popFront();
+    assert(sexp0.front.unwrap!bool == true);
     // #f
-    assert(sexp0[2].unwrap!bool == false);
+    sexp0.popFront();
+    assert(sexp0.front.unwrap!bool == false);
     // '(1 2)
-    auto q = sexp0[3].unwrap!List;
-    assert(q[0].unwrap!Atom.name == "quote");
-    auto xs = q[1].unwrap!List;
-    assert(xs.length == 2);
-    assert(xs[0].unwrap!Integer == 1);
-    assert(xs[1].unwrap!Float == 0.2);
+    sexp0.popFront();
+    auto q = sexp0.front.unwrap!List;
+    assert(q.front.unwrap!Atom.name == "quote");
+    q.popFront();
+    auto xs = q.front.unwrap!List;
+    assert(xs.front.unwrap!Integer == 1);
+    xs.popFront();
+    assert(xs.front.unwrap!Float == 0.2);
+    xs.popFront();
+    assert(xs.empty);
     // '()
-    auto nil = sexp0[4].unwrap!List;
-    assert(nil.length == 2);
-    assert(nil[0].unwrap!Atom.name == "quote");
-    assert(nil[1].unwrap!List.length == 0);
+    sexp0.popFront();
+    auto nil = sexp0.front.unwrap!List;
+    assert(nil.front.unwrap!Atom.name == "quote");
+    nil.popFront();
+    assert(nil.front.unwrap!List.empty);
+    nil.popFront();
+    assert(nil.empty);
+    sexp0.popFront();
+    assert(sexp0.empty);
 
     // (f1 "string"
     //     ;; comment
     //     (+ 20 -30))
     auto sexp1 = ast[1].unwrap!List;
-    assert(sexp1.length == 3);
-    assert(sexp1[0].unwrap!Atom.name == "f1");
-    assert(sexp1[1].unwrap!string == "あいうえお\n");
-    auto addexp = sexp1[2].unwrap!List;
-    assert(addexp[0].unwrap!Atom.name == "+");
-    assert(addexp[1].unwrap!Integer == 20);
-    assert(addexp[2].unwrap!Integer == -30);
+    assert(sexp1.walkLength == 3);
+    assert(sexp1.front.unwrap!Atom.name == "f1");
+    sexp1.popFront();
+    assert(sexp1.front.unwrap!string == "あいうえお\n");
+    sexp1.popFront();
+    auto addexp = sexp1.front.unwrap!List;
+    assert(addexp.front.unwrap!Atom.name == "+");
+    addexp.popFront();
+    assert(addexp.front.unwrap!Integer == 20);
+    addexp.popFront();
+    assert(addexp.front.unwrap!Integer == -30);
+    addexp.popFront();
+    assert(addexp.empty);
+    sexp1.popFront();
+    assert(sexp1.empty);
 
     assert(ast[2].unwrap!bool);
 }
