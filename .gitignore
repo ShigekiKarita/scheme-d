@@ -1,3 +1,11 @@
+*
+
+!*/
+!*.d
+!*.md
+!dub.json
+!.gitignore
+
 .dub
 docs.json
 __dummy.html

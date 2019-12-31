@@ -9,5 +9,17 @@
     },
     "description": "Write yourself a Scheme in 48 Hours in D",
     "license": "BSL-1.0",
-    "name": "scheme-d"
+    "name": "scheme-d",
+    "configurations": [
+        {
+            "name": "default",
+            "targetType": "executable",
+            "versions": ["USE_ALGEBRAIC"]
+        },
+        {
+            "name": "sumtype",
+            "targetType": "executable",
+            "versions": ["USE_SUMTYPE"]
+        }
+    ]
 }

@@ -1,8 +1,9 @@
 import std.stdio;
-import std.stdio;
 
-import parser;
+import schemed.parser : LispParser, toAST;
 
+
+version (unittest) {} else
 void main(string[] args)
 {
     auto parsed = LispParser(readln());
